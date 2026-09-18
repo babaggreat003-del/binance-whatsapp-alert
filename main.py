@@ -2,35 +2,19 @@ import os
 import requests
 import pandas as pd
 from flask import Flask, request, jsonify
-from twilio.rest import Client
 
 app = Flask(__name__)
 
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
-TWILIO_WHATSAPP_NUMBER = os.environ.get("TWILIO_WHATSAPP_NUMBER", "whatsapp:+14155238886")
-YOUR_WHATSAPP_NUMBER = os.environ.get("YOUR_WHATSAPP_NUMBER")
-
 BINANCE_24HR_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
-def send_whatsapp_alert(message_body):
-    try:
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        message = client.messages.create(
-            from_=TWILIO_WHATSAPP_NUMBER,
-            body=message_body,
-            to=YOUR_WHATSAPP_NUMBER
-        )
-        print(f"[+] WhatsApp message sent! SID: {message.sid}")
-    except Exception as e:
-        print(f"[-] Failed to send WhatsApp message: {e}")
-
 def get_top_movers(limit=10):
+    """Fetch top gainers and losers from Binance."""
     try:
         res = requests.get(BINANCE_24HR_URL, timeout=5)
         data = res.json()
         df = pd.DataFrame(data)
         
+        # Filter active USDT trading pairs
         df = df[df['symbol'].str.endswith('USDT')]
         df = df[~df['symbol'].str.contains('UP|DOWN|BEAR|BULL|USDC|FDUSD|TUSD')]
         df['priceChangePercent'] = df['priceChangePercent'].astype(float)
@@ -43,6 +27,10 @@ def get_top_movers(limit=10):
         print(f"[-] Error fetching Binance data: {e}")
         return [], []
 
+@app.route('/', methods=['GET'])
+def home():
+    return "Binance Top Movers Webhook is Live and Ready!", 200
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
@@ -54,26 +42,29 @@ def webhook():
     price = data.get("price", "N/A")
     tf = data.get("timeframe", "15m")
 
+    # Fetch top movers in real-time from Binance
     top_gainers, top_losers = get_top_movers(limit=10)
 
     is_gainer = symbol in top_gainers
     is_loser = symbol in top_losers
 
-    msg = f"🚨 *TRADINGVIEW REVERSAL ALERT* 🚨\n\n"
-    msg += f"• *Symbol:* {symbol}\n"
-    msg += f"• *Signal:* {action}\n"
-    msg += f"• *Price:* ${price}\n"
-    msg += f"• *Timeframe:* {tf}\n\n"
-
+    # Highlight alert in Cloud Server Logs
+    print("\n" + "="*60)
+    print("🚨 TRADINGVIEW REVERSAL SIGNAL RECEIVED 🚨")
+    print(f"• Symbol:    {symbol}")
+    print(f"• Action:    {action}")
+    print(f"• Price:     ${price}")
+    print(f"• Timeframe: {tf}")
+    
     if is_gainer:
-        msg += "🔥 *CONTEXT:* TOP GAINER on Binance! High probability SHORT setup."
+        print(f"🔥 ALERT: {symbol} is currently a TOP GAINER on Binance! High probability SHORT reversal setup.")
     elif is_loser:
-        msg += "📉 *CONTEXT:* TOP LOSER on Binance! High probability LONG bounce setup."
+        print(f"📉 ALERT: {symbol} is currently a TOP LOSER on Binance! High probability LONG bounce setup.")
     else:
-        msg += "ℹ️ *CONTEXT:* Neutral asset (Not in Top 10)."
+        print(f"ℹ️ CONTEXT: {symbol} is neutral (Not in Binance Top 10 Gainers/Losers).")
+    print("="*60 + "\n")
 
-    send_whatsapp_alert(msg)
-    return jsonify({"status": "success", "message": "Alert processed"}), 200
+    return jsonify({"status": "success", "message": "Signal received and logged successfully!"}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
